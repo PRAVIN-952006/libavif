@@ -62,7 +62,7 @@ static inline uint32_t avifBitsReadPos(const avifBits * bits)
 static void avifBitsInit(avifBits * const bits, const uint8_t * const data, const size_t size)
 {
     bits->ptr = bits->start = data;
-    bits->end = &bits->start[size];
+    bits->end = (size > 0) ? (data + size) : data;
     bits->bitsLeft = 0;
     bits->state = 0;
     bits->error = 0;
@@ -87,6 +87,9 @@ static void avifBitsRefill(avifBits * const bits, const uint32_t n)
 
 static uint32_t avifBitsRead(avifBits * const bits, const uint32_t n)
 {
+    if (n == 0) {
+        return 0;
+    }
     if (n > bits->bitsLeft)
         avifBitsRefill(bits, n);
 
@@ -617,10 +620,20 @@ static avifBool av1SequenceHeaderParse(avifSequenceHeader * header, const avifRO
         }
 
         uint32_t obu_size = 0;
-        if (obu_has_size_field)
+        if (obu_has_size_field) {
             obu_size = avifBitsReadUleb128(&bits);
-        else
-            obu_size = (int)obus.size - 1 - obu_extension_flag;
+        } else {
+            const size_t header_size = (size_t)1 + obu_extension_flag;
+            if (obus.size < header_size) {
+                return AVIF_FALSE;
+            }
+#if SIZE_MAX > UINT32_MAX
+            if ((obus.size - header_size) > UINT32_MAX) {
+                return AVIF_FALSE;
+            }
+#endif
+            obu_size = (uint32_t)(obus.size - header_size);
+        }
 
         if (bits.error) {
             return AVIF_FALSE;
@@ -628,8 +641,9 @@ static avifBool av1SequenceHeaderParse(avifSequenceHeader * header, const avifRO
 
         const uint32_t init_bit_pos = avifBitsReadPos(&bits);
         const uint32_t init_byte_pos = init_bit_pos >> 3;
-        if (obu_size > obus.size - init_byte_pos)
+        if (init_byte_pos > obus.size || obu_size > obus.size - init_byte_pos) {
             return AVIF_FALSE;
+        }
 
         if (obu_type == 1) { // Sequence Header
             avifBits seqHdrBits;
@@ -677,7 +691,7 @@ static avifBool av2SequenceHeaderParse(avifSequenceHeader * header, const avifRO
         const uint32_t obuPayloadSize = obuSize - obuHeaderSize;
         const uint32_t initBitPos = avifBitsReadPos(&bits);
         const uint32_t initBytePos = initBitPos >> 3;
-        if (obuPayloadSize > obus.size - initBytePos) {
+        if (initBytePos > obus.size || obuPayloadSize > obus.size - initBytePos) {
             return AVIF_FALSE;
         }
 

@@ -373,8 +373,18 @@ cleanup:
 // and values ranging in [bucketMin, bucketMax] (values outside of the range are added to the first/last buckets).
 static int avifValueToBucketIdx(float v, float bucketMin, float bucketMax, int numBuckets)
 {
+    if (bucketMax <= bucketMin || numBuckets <= 1) {
+        return 0;
+    }
     v = AVIF_CLAMP(v, bucketMin, bucketMax);
-    return AVIF_MIN((int)avifRoundf((v - bucketMin) / (bucketMax - bucketMin) * numBuckets), numBuckets - 1);
+    const float scaled = avifRoundf((v - bucketMin) / (bucketMax - bucketMin) * numBuckets);
+    if (isnan(scaled) || scaled <= 0.0f) {
+        return 0;
+    }
+    if (scaled >= (float)(numBuckets - 1)) {
+        return numBuckets - 1;
+    }
+    return (int)scaled;
 }
 // Returns the lower end of the value range belonging to the given histogram bucket.
 static float avifBucketIdxToValue(int idx, float bucketMin, float bucketMax, int numBuckets)
@@ -384,6 +394,9 @@ static float avifBucketIdxToValue(int idx, float bucketMin, float bucketMax, int
 
 avifResult avifFindMinMaxWithoutOutliers(const float * gainMapF, size_t numPixels, float * rangeMin, float * rangeMax)
 {
+    if (numPixels == 0) {
+        return AVIF_RESULT_INVALID_ARGUMENT;
+    }
     const float bucketSize = 0.01f;        // Size of one bucket. Empirical value.
     const float maxOutliersRatio = 0.001f; // 0.1%
     const int maxOutliersOnEachSide = (int)avifRoundf(numPixels * maxOutliersRatio / 2.0f);
@@ -402,7 +415,9 @@ avifResult avifFindMinMaxWithoutOutliers(const float * gainMapF, size_t numPixel
     }
 
     const int maxNumBuckets = 10000;
-    const int numBuckets = AVIF_MIN((int)ceilf((max - min) / bucketSize), maxNumBuckets);
+    const float rawNumBuckets = ceilf((max - min) / bucketSize);
+    const int numBuckets = (isnan(rawNumBuckets) || rawNumBuckets >= (float)maxNumBuckets) ? maxNumBuckets
+                                                                                           : AVIF_MAX((int)rawNumBuckets, 1);
     int * histogram = avifCalloc(numBuckets, sizeof(int));
     if (histogram == NULL) {
         return AVIF_RESULT_OUT_OF_MEMORY;
@@ -585,6 +600,10 @@ avifResult avifRGBImageComputeGainMap(const avifRGBImage * baseRgbImage,
     avifResult res = AVIF_RESULT_OK;
     // --- After this point, the function should exit with 'goto cleanup' to free allocated resources.
 
+    if (width == 0 || height == 0 || width > SIZE_MAX / height) {
+        res = AVIF_RESULT_INVALID_ARGUMENT;
+        goto cleanup;
+    }
     const size_t numPixels = (size_t)width * height;
     if (numPixels > SIZE_MAX / sizeof(float)) {
         res = AVIF_RESULT_INVALID_ARGUMENT;
